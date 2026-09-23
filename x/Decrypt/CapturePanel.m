@@ -83,7 +83,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
     self.view.backgroundColor = FLEXColor.primaryBackgroundColor;
     self.title = self.navTitle;
     
-    // 导航栏按钮
+    
     UIBarButtonItem *copy = [[UIBarButtonItem alloc]
         initWithTitle:@"复制"
         style:UIBarButtonItemStylePlain
@@ -103,14 +103,14 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
     
     self.navigationItem.rightBarButtonItems = @[share, copy, font];
     
-    // 搜索栏
+    
     self.searchBar = [[UISearchBar alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 44)];
     self.searchBar.delegate = self;
     self.searchBar.placeholder = @"搜索内容...";
     self.searchBar.backgroundColor = FLEXColor.primaryBackgroundColor;
     self.searchBar.searchBarStyle = UISearchBarStyleMinimal;
     
-    // 文本视图
+    
     CGFloat topOffset = 44;
     self.textView = [[UITextView alloc] initWithFrame:CGRectMake(0, topOffset,
         self.view.bounds.size.width, self.view.bounds.size.height - topOffset)];
@@ -140,7 +140,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 - (void)copyAction {
     UIPasteboard.generalPasteboard.string = self.textContent;
     
-    // 视觉反馈
+    
     UILabel *toast = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, 120, 40)];
     toast.center = CGPointMake(self.view.bounds.size.width / 2, self.view.bounds.size.height / 2);
     toast.backgroundColor = [UIColor colorWithWhite:0 alpha:0.8];
@@ -410,7 +410,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
             
             [self.tableView reloadData];
             
-            // 发送数据更新通知
+            
             [[NSNotificationCenter defaultCenter]
                 postNotificationName:CaptureDataUpdatedNotification
                 object:nil
@@ -501,10 +501,10 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 
     [self.tableView registerClass:UITableViewCell.class forCellReuseIdentifier:@"CaptureCell"];
     
-    // 底部状态栏
+    
     [self setupStatusBar];
     
-    // 监听数据更新通知
+    
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(handleDataUpdate:)
                                                  name:CaptureDataUpdatedNotification
@@ -560,7 +560,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 }
 
 - (void)reloadData {
-    // 数据库查询放到后台线程，避免卡顿
+    
     NSString *tableName = self.tableName;
     NSString *searchText = self.searchController.searchBar.text;
     
@@ -857,18 +857,18 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
     
     [self updateRightBarButtonItems];
     
-    // 延迟执行重量级操作放到后台线程，避免进入时卡顿
+    
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        // 确保解密 hook 已安装（放到后台线程）
+        
         [UCDecryptTool installDecryptHooksIfNeeded];
         
-        // 确保 FLEX 网络监听已启用
+        
         if (!FLEXNetworkObserver.isEnabled) {
             FLEXNetworkObserver.enabled = YES;
         }
     });
     
-    // 延迟显示首次弹窗，等界面渲染完成后再显示（避免卡顿）
+    
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         [self showFirstLaunchAlertIfNeeded];
@@ -876,7 +876,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 }
 
 - (void)showFirstLaunchAlertIfNeeded {
-    // 检查是否已经显示过首次提示
+    
     NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
     NSString *hasShownKey = [NSString stringWithFormat:@"capture_first_shown_%@", bundleID];
     BOOL hasShown = [[NSUserDefaults standardUserDefaults] boolForKey:hasShownKey];
@@ -885,13 +885,13 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
         return;
     }
     
-    // 显示功能开关引导弹窗
+    
     UIAlertController *alert = [UIAlertController
         alertControllerWithTitle:@"逆向助手"
         message:@"欢迎使用逆向助手！\n\n请选择需要启用的功能："
         preferredStyle:UIAlertControllerStyleAlert];
     
-    // 添加总开关说明
+    
     [alert addAction:[UIAlertAction actionWithTitle:@"全部启用 (推荐)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
         [self enableAllFeatures:YES];
         [[NSUserDefaults standardUserDefaults] setBool:YES forKey:hasShownKey];
@@ -978,7 +978,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 - (void)settingsDoneTapped {
     [self.presentedViewController dismissViewControllerAnimated:YES completion:nil];
     
-    // 刷新各列表数据
+    
     for (UIViewController *vc in self.viewControllers) {
         if ([vc isKindOfClass:[CaptureListViewController class]]) {
             [(CaptureListViewController *)vc reloadData];

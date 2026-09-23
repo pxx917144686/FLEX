@@ -75,7 +75,7 @@ const char* replaced_SSL_get_psk_identity(void *ssl) {
     if (identity) {
         NSString *bundleID = CurrentBundleID();
         DatabaseManager *db = [DatabaseManager sharedManager];
-        // 开关保护：仅当 SSL 捕获开关开启时才写库
+        
         if ([db getSwitch:@"ssl3kaiguan" bundleID:bundleID defaultValue:NO]) {
             NSString *pskInfo = [NSString stringWithFormat:@"PSK Identity: %s", identity];
             [db insertDataIntoTable:@"ssl_psk" bundleID:bundleID text:pskInfo];

@@ -1495,7 +1495,7 @@ static NSString *UCFilzaMachOUUID(void) {
     const uint32_t *magicPtr = (const uint32_t *)exec;
     uint32_t magic = *magicPtr;
     
-    BOOL is64 = (magic == MH_MAGIC_64);  // 拒绝 MH_CIGAM_64 大端序：后续直接读取字段未做字节交换
+    BOOL is64 = (magic == MH_MAGIC_64);  
     uint32_t ncmds = 0;
     const uint8_t *cmds = NULL;
     
@@ -1511,10 +1511,10 @@ static NSString *UCFilzaMachOUUID(void) {
     
     uint32_t offset = 0;
     for (uint32_t i = 0; i < ncmds; i++) {
-        // 边界检查：offset 相对于 cmds(hdr+1)，需减去 header 大小
+        
         if ((uint64_t)offset + sizeof(struct load_command) > data.length - sizeof(struct mach_header_64)) break;
         const struct load_command *lc = (const struct load_command *)(cmds + offset);
-        if (lc->cmdsize == 0) break;  // 防止 cmdsize==0 导致死循环
+        if (lc->cmdsize == 0) break;  
         if (lc->cmd == LC_UUID) {
             const struct uuid_command *uuidCmd = (const struct uuid_command *)lc;
             NSUUID *uuid = [[NSUUID alloc] initWithUUIDBytes:uuidCmd->uuid];
@@ -1551,7 +1551,7 @@ static NSArray<NSDictionary<NSString *, NSString *> *> *UCFilzaMachOLoadCommands
     const uint8_t *cmds = (const uint8_t *)(hdr + 1);
     uint32_t offset = 0;
     for (uint32_t i = 0; i < hdr->ncmds; i++) {
-        if ((uint64_t)offset + sizeof(struct load_command) > data.length - sizeof(struct mach_header_64)) break;  // 边界检查修正：offset 相对 cmds(hdr+1)
+        if ((uint64_t)offset + sizeof(struct load_command) > data.length - sizeof(struct mach_header_64)) break;  
         const struct load_command *lc = (const struct load_command *)(cmds + offset);
         if (lc->cmdsize == 0) break;
         NSString *cmdName = [NSString stringWithFormat:@"0x%x", lc->cmd];
@@ -1592,7 +1592,7 @@ static NSArray<NSDictionary<NSString *, NSString *> *> *UCFilzaMachOLoadCommands
         }
         NSString *subtitle = [NSString stringWithFormat:@"size: %u", lc->cmdsize];
         if (lc->cmd == LC_SEGMENT_64) {
-            // 验证可完整读取 segment_command_64（72字节），避免越界
+            
             if ((uint64_t)offset + sizeof(struct segment_command_64) > data.length - sizeof(struct mach_header_64)) break;
             const struct segment_command_64 *seg = (const struct segment_command_64 *)lc;
             char name[17] = {0};
@@ -1644,11 +1644,11 @@ static NSArray<NSDictionary<NSString *, NSString *> *> *UCFilzaMachOSegments(voi
     const uint8_t *cmds = (const uint8_t *)(hdr + 1);
     uint32_t offset = 0;
     for (uint32_t i = 0; i < hdr->ncmds; i++) {
-        if ((uint64_t)offset + sizeof(struct load_command) > data.length - sizeof(struct mach_header_64)) break;  // 边界检查修正：offset 相对 cmds(hdr+1)
+        if ((uint64_t)offset + sizeof(struct load_command) > data.length - sizeof(struct mach_header_64)) break;  
         const struct load_command *lc = (const struct load_command *)(cmds + offset);
         if (lc->cmdsize == 0) break;
         if (lc->cmd == LC_SEGMENT_64) {
-            // 验证可完整读取 segment_command_64（72字节），避免越界
+            
             if ((uint64_t)offset + sizeof(struct segment_command_64) > data.length - sizeof(struct mach_header_64)) break;
             const struct segment_command_64 *seg = (const struct segment_command_64 *)lc;
             char name[17] = {0};
@@ -1682,18 +1682,18 @@ static NSArray<NSDictionary<NSString *, NSString *> *> *UCFilzaMachOSectionsForS
     const uint8_t *cmds = (const uint8_t *)(hdr + 1);
     uint32_t offset = 0;
     for (uint32_t i = 0; i < hdr->ncmds; i++) {
-        if ((uint64_t)offset + sizeof(struct load_command) > data.length - sizeof(struct mach_header_64)) break;  // 边界检查修正：offset 相对 cmds(hdr+1)
+        if ((uint64_t)offset + sizeof(struct load_command) > data.length - sizeof(struct mach_header_64)) break;  
         const struct load_command *lc = (const struct load_command *)(cmds + offset);
         if (lc->cmdsize == 0) break;
         if (lc->cmd == LC_SEGMENT_64) {
-            // 验证可完整读取 segment_command_64（72字节），避免越界
+            
             if ((uint64_t)offset + sizeof(struct segment_command_64) > data.length - sizeof(struct mach_header_64)) break;
             const struct segment_command_64 *seg = (const struct segment_command_64 *)lc;
             char curSegName[17] = {0};
             strncpy(curSegName, seg->segname, 16);
             NSString *curSeg = [NSString stringWithUTF8String:curSegName];
             if ([curSeg isEqualToString:segName]) {
-                // 验证 sections 数组完整可读，防止 nsects 越界
+                
                 if ((uint8_t *)(seg + 1) + (uint64_t)seg->nsects * sizeof(struct section_64) > (uint8_t *)data.bytes + data.length) break;
                 const struct section_64 *sect = (const struct section_64 *)(seg + 1);
                 for (uint32_t j = 0; j < seg->nsects; j++) {
@@ -1965,8 +1965,12 @@ static vm_size_t UCFilzaMemoryUsage(void) {
 - (void)updateBinaryUUID:(NSString *)uuid {
     if (self.sectionData.count <= UCFilzaAppInfoSectionBinary) return;
     NSMutableArray *binary = [self.sectionData[UCFilzaAppInfoSectionBinary] mutableCopy];
-    if (binary.count >= 4) {
-        binary[3] = @{@"title": @"UUID", @"value": uuid ?: @"未知", @"copyable": @YES};
+    
+    NSUInteger uuidRow = [binary indexOfObjectPassingTest:^BOOL(NSDictionary *row, NSUInteger idx, BOOL *stop) {
+        return [row[@"title"] isEqualToString:@"UUID"];
+    }];
+    if (uuidRow != NSNotFound) {
+        binary[uuidRow] = @{@"title": @"UUID", @"value": uuid ?: @"未知", @"copyable": @YES};
     }
     NSMutableArray *allData = [self.sectionData mutableCopy];
     allData[UCFilzaAppInfoSectionBinary] = binary.copy;
@@ -4866,7 +4870,7 @@ static UIImage *UCFilzaPreviewImageForCarAsset(NSString *filePath, NSString *ass
 + (void)presentFilzaPanelFromViewController:(UIViewController *)viewController {
     if (!viewController) return;
 
-    UCFilzaAppInfoViewController *root = [[UCFilzaAppInfoViewController alloc] initWithStyle:UITableViewStyleInsetGrouped];
+    UCFilzaRootViewController *root = [[UCFilzaRootViewController alloc] initWithStyle:UITableViewStyleInsetGrouped];
     UINavigationController *navigationController = [[UINavigationController alloc] initWithRootViewController:root];
     navigationController.modalPresentationStyle = UIModalPresentationFormSheet;
     navigationController.preferredContentSize = CGSizeMake(430, 640);

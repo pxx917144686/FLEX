@@ -48,7 +48,7 @@ static BOOL uc_safe_read_memory(uint64_t address, void *buffer, size_t size) {
     }
     return self;
 }
-// 打破 successors/predecessors 互相强引用导致的 retain cycle
+
 - (void)dealloc {
     _successors = nil;
     _predecessors = nil;
@@ -56,7 +56,7 @@ static BOOL uc_safe_read_memory(uint64_t address, void *buffer, size_t size) {
 @end
 
 @implementation UCFunction
-// 释放时清空 basicBlocks，间接触发 UCBasicBlock dealloc 打破循环
+
 - (void)dealloc {
     for (UCBasicBlock *block in self.basicBlocks) {
         block.successors = nil;
@@ -103,7 +103,10 @@ static BOOL uc_safe_read_memory(uint64_t address, void *buffer, size_t size) {
 
 - (NSString *)engineName {
     if (g_capstoneInitialized) {
-        return [NSString stringWithFormat:@"Capstone %d (Pro)", cs_version(NULL, NULL)];
+        
+        int major = 0, minor = 0;
+        cs_version(&major, &minor);
+        return [NSString stringWithFormat:@"Capstone %d.%d (Pro)", major, minor];
     }
     return @"HexDump (Fallback)";
 }
@@ -136,8 +139,8 @@ static BOOL uc_safe_read_memory(uint64_t address, void *buffer, size_t size) {
 }
 
 - (void)dealloc {
-    // 全局句柄由单例管理，非单例实例释放时不关闭
-    // 避免 [[UCDisassembler alloc] init] 释放后影响 sharedInstance
+    
+    
 }
 
 #pragma mark - 公共反汇编方法
@@ -184,7 +187,7 @@ static BOOL uc_safe_read_memory(uint64_t address, void *buffer, size_t size) {
 
     UCFunction *func = [self analyzeFunctionAtAddress:addr maxSize:65536];
 
-    // 复用 analyzeFunctionAtAddress 已产生的反汇编结果，避免重复反汇编
+    
     UCDisasmResult *result = [[UCDisasmResult alloc] init];
     result.startAddress = addr;
     result.engineName = self.engineName;
@@ -202,7 +205,7 @@ static BOOL uc_safe_read_memory(uint64_t address, void *buffer, size_t size) {
         [self analyzeAndAnnotateResult:result];
         result.functions = @[func];
     } else {
-        // 回退：分析失败时直接反汇编
+        
         NSUInteger actualSize = func ? func.size : 4096;
         UCDisasmResult *fallback = [self disassembleAtAddress:addr size:actualSize];
         if (fallback) {
@@ -456,11 +459,12 @@ static BOOL uc_safe_read_memory(uint64_t address, void *buffer, size_t size) {
         UCDisasmInstruction *di = [[UCDisasmInstruction alloc] init];
         di.address = insnAddr;
         di.size = 4;
+        
         di.bytesHex = [NSString stringWithFormat:@"%02x %02x %02x %02x",
-                        (insn >> 24) & 0xFF,
-                        (insn >> 16) & 0xFF,
+                        insn & 0xFF,
                         (insn >> 8) & 0xFF,
-                        insn & 0xFF];
+                        (insn >> 16) & 0xFF,
+                        (insn >> 24) & 0xFF];
         
         NSString *mnemonic = [self simpleDecodeArm64:insn];
         if (mnemonic) {
@@ -481,8 +485,10 @@ static BOOL uc_safe_read_memory(uint64_t address, void *buffer, size_t size) {
 }
 
 - (nullable NSString *)simpleDecodeArm64:(uint32_t)insn {
-    if ((insn & 0x7C000000) == 0x14000000) return @"b";
-    if ((insn & 0x7C000000) == 0x94000000) return @"bl";
+    
+    
+    if ((insn & 0xFC000000) == 0x94000000) return @"bl";
+    if ((insn & 0xFC000000) == 0x14000000) return @"b";
     if ((insn & 0x7E000000) == 0x34000000) return @"cbz";
     if ((insn & 0x7E000000) == 0x35000000) return @"cbnz";
     if ((insn & 0x7C000000) == 0x36000000) return @"tbz";
@@ -658,7 +664,7 @@ static BOOL uc_safe_read_memory(uint64_t address, void *buffer, size_t size) {
             if (idx < instructions.count - 1) {
                 UCDisasmInstruction *next = instructions[idx + 1];
                 UCBasicBlock *fallthrough = blockMap[@(next.address)];
-                // 去重：true 目标和 fall-through 相同时不重复添加
+                
                 if (fallthrough && fallthrough != targetBlock) {
                     [block.successors addObject:fallthrough];
                     [fallthrough.predecessors addObject:block];
@@ -816,7 +822,9 @@ static BOOL uc_safe_read_memory(uint64_t address, void *buffer, size_t size) {
     UCDisasmOperand *op2 = insn.operandList[1];
     if (op2.type != UCDisasmOperandTypeImmediate) return nil;
     
-    uint64_t pageBase = (insn.address & ~0xFFFULL) + op2.immediateValue;
+    
+    
+    uint64_t pageBase = op2.immediateValue;
     
     uint64_t ldrOffset = 0;
     BOOL foundLDR = NO;

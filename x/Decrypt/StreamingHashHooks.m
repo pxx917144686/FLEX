@@ -89,7 +89,7 @@ static NSString *PtrKey(const void *ptr) {
     return [NSString stringWithFormat:@"%p", ptr];
 }
 
-// 捕获开关全关时短路，避免每次 hash 调用累积数据/加锁/格式化
+
 static BOOL StreamingCaptureActive(void) {
     return [[DatabaseManager sharedManager] anyCaptureActiveForBundle:CurrentBundleID()];
 }
@@ -117,14 +117,15 @@ static void AppendHashCtx(const void *ctx, const void *data, size_t len) {
 }
 
 static void FinalizeHashCtx(const void *ctx, const unsigned char *md) {
-    if (!StreamingCaptureActive()) return;
-
     NSMutableDictionary *entry = nil;
     @synchronized (HashCtxMap()) {
         entry = [HashCtxMap()[PtrKey(ctx)] mutableCopy];
+        
+        
         [HashCtxMap() removeObjectForKey:PtrKey(ctx)];
     }
     if (!entry || !md) return;
+    if (!StreamingCaptureActive()) return;
 
     NSString *algo = entry[@"algo"];
     NSUInteger digestLen = [entry[@"digestLen"] unsignedIntegerValue];
@@ -132,7 +133,7 @@ static void FinalizeHashCtx(const void *ctx, const unsigned char *md) {
     NSString *bundleID = CurrentBundleID();
     DatabaseManager *db = [DatabaseManager sharedManager];
 
-    // 开关保护：仅当对应捕获开关开启时才写库，避免刷视频时无限制增长
+    
     BOOL digestEnabled = [db isDigestCaptureEnabledForBundle:bundleID];
     BOOL cryptoEnabled = [db isCryptoCaptureEnabledForBundle:bundleID];
     if (digestEnabled || cryptoEnabled) {
@@ -196,14 +197,14 @@ static void AppendHMACCtx(const void *ctx, const void *data, size_t len) {
 }
 
 static void FinalizeHMACCtx(const void *ctx, void *macOut) {
-    if (!StreamingCaptureActive()) return;
-
     NSMutableDictionary *entry = nil;
     @synchronized (HMACCtxMap()) {
         entry = [HMACCtxMap()[PtrKey(ctx)] mutableCopy];
+        
         [HMACCtxMap() removeObjectForKey:PtrKey(ctx)];
     }
     if (!entry || !macOut) return;
+    if (!StreamingCaptureActive()) return;
 
     NSString *algo = entry[@"algo"];
     NSUInteger digestLen = [entry[@"digestLen"] unsignedIntegerValue];
@@ -213,7 +214,7 @@ static void FinalizeHMACCtx(const void *ctx, void *macOut) {
     NSString *bundleID = CurrentBundleID();
     DatabaseManager *db = [DatabaseManager sharedManager];
 
-    // 开关保护：仅当对应捕获开关开启时才写库，避免刷视频时无限制增长
+    
     BOOL hmacEnabled = [db isHMACCaptureEnabledForBundle:bundleID];
     BOOL cryptoEnabled = [db isCryptoCaptureEnabledForBundle:bundleID];
     if (hmacEnabled || cryptoEnabled) {
@@ -406,7 +407,7 @@ int my_CCDigest(uint32_t algorithm, const void *data, size_t dataLength, void *o
     NSString *bundleID = CurrentBundleID();
     DatabaseManager *db = [DatabaseManager sharedManager];
 
-    // 开关保护：仅当对应捕获开关开启时才写库，避免刷视频时无限制增长
+    
     BOOL digestEnabled = [db isDigestCaptureEnabledForBundle:bundleID];
     BOOL cryptoEnabled = [db isCryptoCaptureEnabledForBundle:bundleID];
     if (digestEnabled || cryptoEnabled) {

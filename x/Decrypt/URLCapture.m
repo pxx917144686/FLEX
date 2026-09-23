@@ -519,6 +519,8 @@ static NSURLSessionDataTask *HookedDataTaskWithURL(id self, SEL command,
 static void AppendDelegateData(NSURLSessionDataTask *task, NSData *data) {
     if (!task || data.length == 0) return;
     if (!URLCaptureEnabled()) return;
+    
+    if (objc_getAssociatedObject(task, &kCompletionTaskKey)) return;
     NSValue *key = [NSValue valueWithNonretainedObject:task];
     dispatch_async(gResponseQueue, ^{
         NSMutableDictionary *state = gTaskStates[key];
@@ -539,9 +541,18 @@ static void AppendDelegateData(NSURLSessionDataTask *task, NSData *data) {
 }
 
 static void CompleteDelegateTask(NSURLSessionTask *task, NSError *error) {
-    if (!task || objc_getAssociatedObject(task, &kCompletionTaskKey)) return;
-    if (!URLCaptureEnabled()) return;
+    if (!task) return;
     NSValue *key = [NSValue valueWithNonretainedObject:task];
+    
+    
+    
+    BOOL isCompletionTask = (objc_getAssociatedObject(task, &kCompletionTaskKey) != nil);
+    if (isCompletionTask || !URLCaptureEnabled()) {
+        dispatch_async(gResponseQueue, ^{
+            [gTaskStates removeObjectForKey:key];
+        });
+        return;
+    }
     NSURLRequest *request = task.currentRequest ?: task.originalRequest;
     NSURLResponse *response = task.response;
     dispatch_async(gResponseQueue, ^{
@@ -593,7 +604,7 @@ static id HookedSessionInit(id self, SEL command, NSURLSessionConfiguration *con
 }
 
 static void HookAllSessionSubclasses(void) {
-    // 遍历所有类，寻找 NSURLSession 的子类
+    
     int numClasses = objc_getClassList(NULL, 0);
     if (numClasses <= 0) return;
     
@@ -607,7 +618,7 @@ static void HookAllSessionSubclasses(void) {
         Class cls = classes[i];
         Class superCls = class_getSuperclass(cls);
         
-        // 检查是否是 NSURLSession 的子类（但不是 NSURLSession 本身）
+        
         while (superCls) {
             if (superCls == baseClass) {
                 HookMethod(cls, @selector(dataTaskWithRequest:completionHandler:),
@@ -624,21 +635,23 @@ static void HookAllSessionSubclasses(void) {
 }
 
 static void HookNSURLSessionClass(Class cls) {
+    
+    
     HookMethod(cls, @selector(dataTaskWithRequest:completionHandler:),
-               (IMP)HookedDataTaskWithRequest, &kRequestTaskOriginalKey, NULL, YES);
+               (IMP)HookedDataTaskWithRequest, &kRequestTaskOriginalKey, "@@:@@?", YES);
     HookMethod(cls, @selector(dataTaskWithURL:completionHandler:),
-               (IMP)HookedDataTaskWithURL, &kURLTaskOriginalKey, NULL, YES);
+               (IMP)HookedDataTaskWithURL, &kURLTaskOriginalKey, "@@:@@?", YES);
     HookMethod(cls, @selector(initWithConfiguration:delegate:delegateQueue:),
-               (IMP)HookedSessionInit, &kSessionInitOriginalKey, NULL, YES);
+               (IMP)HookedSessionInit, &kSessionInitOriginalKey, "@@:@@@", YES);
 }
 
-// Hook NSURLSessionTask 的 resume 方法，用于捕获所有任务（包括 upload/download）
+
 static char kTaskResumeOriginalKey;
 
 static void HookedTaskResume(id self, SEL command) {
     IMP imp = OriginalIMP(self, &kTaskResumeOriginalKey, (IMP)HookedTaskResume);
 
-    // 开关关闭时直接透传，避免每次 resume 做 KVC 与 delegate 类 hook
+    
     if (!URLCaptureEnabled()) {
         if (imp) {
             void (*original)(id, SEL) = (void *)imp;
@@ -647,11 +660,11 @@ static void HookedTaskResume(id self, SEL command) {
         return;
     }
 
-    // 如果是 data task 且没有 completion handler，确保 delegate 被 hook
+    
     if ([self isKindOfClass:[NSURLSessionDataTask class]]) {
         NSURLSessionTask *task = (NSURLSessionTask *)self;
         if (task && !objc_getAssociatedObject(task, &kCompletionTaskKey)) {
-            // 尝试获取 session 的 delegate 并 hook
+            
             id session = [task valueForKey:@"session"];
             if (session && [session isKindOfClass:[NSURLSession class]]) {
                 id delegate = [session delegate];

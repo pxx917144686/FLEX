@@ -8,6 +8,7 @@
 #import <sys/socket.h>
 #import <netinet/in.h>
 #import <sys/types.h>
+#import <errno.h>
 #import <CoreFoundation/CoreFoundation.h>
 #import <zlib.h>
 #import <dlfcn.h>
@@ -973,9 +974,13 @@ static void HookNSURLConnectionClassMethods(void) {
 static int (*orig_connect)(int, const struct sockaddr *, socklen_t);
 
 static int hooked_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
-    // 开关关闭时直接透传，避免每次 TCP connect 做 inet_ntop + 字符串格式化
+    
+    
+    if (!orig_connect) { errno = ENOSYS; return -1; }
+
+    
     if (!URLInterceptEnabled()) {
-        return orig_connect ? orig_connect(sockfd, addr, addrlen) : connect(sockfd, addr, addrlen);
+        return orig_connect(sockfd, addr, addrlen);
     }
 
     NSString *target = SockAddrToString(addr);
@@ -996,7 +1001,7 @@ static int hooked_connect(int sockfd, const struct sockaddr *addr, socklen_t add
             SaveInterceptRecord(title, detail);
         }
     }
-    return orig_connect ? orig_connect(sockfd, addr, addrlen) : connect(sockfd, addr, addrlen);
+    return orig_connect(sockfd, addr, addrlen);
 }
 
 static int (*orig_getaddrinfo)(const char *, const char *,
@@ -1004,8 +1009,10 @@ static int (*orig_getaddrinfo)(const char *, const char *,
 
 static int hooked_getaddrinfo(const char *node, const char *service,
                                const struct addrinfo *hints, struct addrinfo **res) {
-    int ret = orig_getaddrinfo ? orig_getaddrinfo(node, service, hints, res)
-                               : getaddrinfo(node, service, hints, res);
+    
+    if (!orig_getaddrinfo) return EAI_FAIL;
+
+    int ret = orig_getaddrinfo(node, service, hints, res);
 
     if (URLInterceptEnabled() && node && !IsIPAddress(node) && res && *res) {
         NSMutableArray<NSString *> *ips = [NSMutableArray array];
@@ -1041,11 +1048,13 @@ static void hooked_CFStreamCreatePairWithSocketToHost(CFAllocatorRef alloc, CFSt
             @"主机: %@\n端口: %d\n类型=CFStream 流式连接", hostStr, port];
         SaveInterceptRecord(title, detail);
     }
-    if (orig_CFStreamCreatePairWithSocketToHost) {
-        orig_CFStreamCreatePairWithSocketToHost(alloc, host, port, readStream, writeStream);
-    } else {
-        CFStreamCreatePairWithSocketToHost(alloc, host, port, readStream, writeStream);
+    if (!orig_CFStreamCreatePairWithSocketToHost) {
+        
+        if (readStream) *readStream = NULL;
+        if (writeStream) *writeStream = NULL;
+        return;
     }
+    orig_CFStreamCreatePairWithSocketToHost(alloc, host, port, readStream, writeStream);
 }
 
 static void RegisterFishhookHooks(void) {
@@ -1081,11 +1090,11 @@ void RegisterURLInterceptHooks(void) {
 
         RegisterFishhookHooks();
 
-        // 注意：本文件中的 NSURLSession 系列 swizzle（IZXSwizzleResumeSelector /
-        // HookTaskResume / HookSessionAsyncMethods / HookUploadMethods /
-        // SwizzleSessionDelegate / RecordTaskRequest 等）从未在此注册，属于死代码。
-        // 若未来启用，必须先加 URLInterceptEnabled() 开关门，否则会无条件
-        // 拦截全 App 每个请求/每次 resume（NSURLSession 抓包由 URLCapture.m 负责）。
+        
+        
+        
+        
+        
 
         NSLog(@"[URLIntercept] 底层拦截 hooks 已注册:");
         NSLog(@"  - NSURLConnection (同步/异步)");

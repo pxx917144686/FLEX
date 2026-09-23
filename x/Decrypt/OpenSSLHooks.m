@@ -69,7 +69,7 @@ static NSString *PtrKey(const void *ptr) {
     return [NSString stringWithFormat:@"%p", ptr];
 }
 
-// 捕获开关全关时短路，避免每次 EVP 调用累积/格式化
+
 static BOOL EVPCaptureActive(void) {
     return [[DatabaseManager sharedManager] anyCaptureActiveForBundle:CurrentBundleID()];
 }
@@ -137,14 +137,15 @@ static void AppendEVPIO(const void *ctx, const void *dataIn, size_t inLen, const
 }
 
 static void FinalizeEVPCtx(const void *ctx, const void *finalOut, size_t finalLen) {
-    if (!EVPCaptureActive()) return;
-
     NSMutableDictionary *entry = nil;
     @synchronized (EVPCtxMap()) {
         entry = [EVPCtxMap()[PtrKey(ctx)] mutableCopy];
+        
+        
         [EVPCtxMap() removeObjectForKey:PtrKey(ctx)];
     }
     if (!entry) return;
+    if (!EVPCaptureActive()) return;
 
     if (finalOut && finalLen) {
         [(NSMutableData *)entry[@"outputAccum"] appendBytes:finalOut length:finalLen];
@@ -157,7 +158,7 @@ static void FinalizeEVPCtx(const void *ctx, const void *finalOut, size_t finalLe
     NSString *bundleID = CurrentBundleID();
     DatabaseManager *db = [DatabaseManager sharedManager];
 
-    // 开关保护：仅当加密捕获开启时才构建 info 字符串并写库，避免无谓的全量 Hex/Base64 格式化
+    
     if ([db isCryptoCaptureEnabledForBundle:bundleID]) {
         NSString *keyHex = entry[@"keyHex"] ?: @"(null)";
         NSString *keyB64 = entry[@"keyB64"] ?: @"(null)";
@@ -200,7 +201,7 @@ static int (*orig_EVP_CipherUpdate)(void *ctx, unsigned char *out, int *outl, co
 static int (*orig_EVP_EncryptUpdate)(void *ctx, unsigned char *out, int *outl, const unsigned char *in, int inl);
 static int (*orig_EVP_DecryptUpdate)(void *ctx, unsigned char *out, int *outl, const unsigned char *in, int inl);
 
-static int (*orig_EVP_CipherFinal)(void *ctx, unsigned char *outm, int *outl);
+static int (*orig_EVP_CipherFinal_ex)(void *ctx, unsigned char *outm, int *outl);
 static int (*orig_EVP_EncryptFinal_ex)(void *ctx, unsigned char *outm, int *outl);
 static int (*orig_EVP_DecryptFinal_ex)(void *ctx, unsigned char *outm, int *outl);
 
@@ -261,12 +262,12 @@ int my_EVP_DecryptUpdate(void *ctx, unsigned char *out, int *outl, const unsigne
     return result;
 }
 
-int my_EVP_CipherFinal(void *ctx, unsigned char *outm, int *outl) {
-    if (!orig_EVP_CipherFinal) {
+int my_EVP_CipherFinal_ex(void *ctx, unsigned char *outm, int *outl) {
+    if (!orig_EVP_CipherFinal_ex) {
         if (outl) *outl = 0;
         return 0;
     }
-    int result = orig_EVP_CipherFinal(ctx, outm, outl);
+    int result = orig_EVP_CipherFinal_ex(ctx, outm, outl);
     size_t finalLen = (result == 1 && outl) ? *outl : 0;
     FinalizeEVPCtx(ctx, outm, finalLen);
     return result;
@@ -302,7 +303,7 @@ void my_AES_cbc_encrypt(const unsigned char *in, unsigned char *out, size_t leng
     DatabaseManager *db = [DatabaseManager sharedManager];
     BOOL isDecrypt = (enc == 0);
 
-    // 开关保护：仅当加密捕获开关开启时才写库
+    
     if ([db isCryptoCaptureEnabledForBundle:bundleID]) {
         NSString *info = [NSString stringWithFormat:
                           @"[AES_cbc_encrypt] %@\nIV Hex: %@\nIV Base64: %@\n输入 Hex: %@\n输入 Base64: %@\n输入 UTF8: %@\n输入长度: %lu\n输出 Hex: %@\n输出 Base64: %@\n输出 UTF8: %@\n输出长度: %lu\n(注: AES_KEY 为扩展密钥, 原始密钥无法直接提取)",
@@ -325,7 +326,7 @@ void my_AES_encrypt(const unsigned char *in, unsigned char *out, const void *key
     NSString *bundleID = CurrentBundleID();
     DatabaseManager *db = [DatabaseManager sharedManager];
 
-    // 开关保护：仅当加密捕获开关开启时才写库
+    
     if ([db isCryptoCaptureEnabledForBundle:bundleID]) {
         NSString *info = [NSString stringWithFormat:
                           @"[AES_encrypt] 单块加密\n输入 Hex: %@\n输出 Hex: %@\n(注: AES_KEY 为扩展密钥, 原始密钥无法直接提取)",
@@ -342,7 +343,7 @@ void my_AES_decrypt(const unsigned char *in, unsigned char *out, const void *key
     NSString *bundleID = CurrentBundleID();
     DatabaseManager *db = [DatabaseManager sharedManager];
 
-    // 开关保护：仅当加密捕获开关开启时才写库
+    
     if ([db isCryptoCaptureEnabledForBundle:bundleID]) {
         NSString *info = [NSString stringWithFormat:
                           @"[AES_decrypt] 单块解密\n输入 Hex: %@\n输出 Hex: %@\n输出 UTF8: %@\n(注: AES_KEY 为扩展密钥, 原始密钥无法直接提取)",
@@ -367,7 +368,7 @@ void RegisterOpenSSLHooks(void) {
         {"EVP_EncryptUpdate",  my_EVP_EncryptUpdate,  (void **)&orig_EVP_EncryptUpdate},
         {"EVP_DecryptUpdate",  my_EVP_DecryptUpdate,  (void **)&orig_EVP_DecryptUpdate},
 
-        {"EVP_CipherFinal",      my_EVP_CipherFinal,      (void **)&orig_EVP_CipherFinal},
+        {"EVP_CipherFinal_ex",      my_EVP_CipherFinal_ex,      (void **)&orig_EVP_CipherFinal_ex},
         {"EVP_EncryptFinal_ex",  my_EVP_EncryptFinal_ex,  (void **)&orig_EVP_EncryptFinal_ex},
         {"EVP_DecryptFinal_ex",  my_EVP_DecryptFinal_ex,  (void **)&orig_EVP_DecryptFinal_ex},
 

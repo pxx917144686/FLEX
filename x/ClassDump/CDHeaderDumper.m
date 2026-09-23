@@ -503,15 +503,15 @@ static NSString *CDProtocolHeader(Protocol *protocol) {
 
 @implementation CDHeaderDumper
 
-/// 缓存：按镜像分组的类名列表
+
 static NSArray<NSDictionary *> *_cachedClassNamesByImage = nil;
-/// 缓存：所有类名的扁平数组
+
 static NSArray<NSString *> *_cachedAllClassNames = nil;
-/// 缓存时的镜像数量（用于检测是否需要刷新）
+
 static uint32_t _cachedImageCount = 0;
 
 + (NSArray<NSDictionary *> *)collectSafeClassNamesByImage {
-    // 检查缓存是否有效
+    
     uint32_t currentImageCount = _dyld_image_count();
     if (_cachedClassNamesByImage && _cachedImageCount == currentImageCount) {
         return _cachedClassNamesByImage;
@@ -556,10 +556,10 @@ static uint32_t _cachedImageCount = 0;
         }
     }
     
-    // 更新缓存
+    
     _cachedClassNamesByImage = result.copy;
     _cachedImageCount = currentImageCount;
-    // 清空扁平数组缓存，下次需要时重新生成
+    
     _cachedAllClassNames = nil;
 
     return result;
@@ -797,7 +797,7 @@ static uint32_t _cachedImageCount = 0;
     Class cls = [self classForName:className];
     if (!cls) return nil;
     
-    // 尝试找到类所在的 image
+    
     NSString *imageName = @"Unknown";
     const char *classNameC = className.UTF8String;
     
@@ -833,7 +833,7 @@ static uint32_t _cachedImageCount = 0;
 }
 
 + (NSArray<NSString *> *)allClassNames {
-    // 检查缓存
+    
     if (_cachedAllClassNames) {
         return _cachedAllClassNames;
     }
@@ -848,10 +848,10 @@ static uint32_t _cachedImageCount = 0;
         }
     }
     
-    // 排序
+    
     [allNames sortUsingSelector:@selector(caseInsensitiveCompare:)];
     
-    // 缓存结果
+    
     _cachedAllClassNames = allNames.copy;
     return _cachedAllClassNames;
 }

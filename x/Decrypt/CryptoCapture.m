@@ -155,8 +155,9 @@ static Boolean (*orig_SecKeyVerifySignature)(SecKeyRef key, SecKeyAlgorithm algo
 
 static CCCryptorStatus (*orig_CCCryptorGCMAddIV)(CCCryptorRef cryptorRef, const void *iv, size_t ivLen);
 static CCCryptorStatus (*orig_CCCryptorGCMAddAAD)(CCCryptorRef cryptorRef, const void *aData, size_t aDataLen);
-static CCCryptorStatus (*orig_CCCryptorGCMUpdate)(CCCryptorRef cryptorRef, const void *dataIn, size_t dataInLength, void *dataOut);
-static CCCryptorStatus (*orig_CCCryptorGCMFinal)(CCCryptorRef cryptorRef, void *dataOut, void *tagOut, size_t *tagLength);
+static CCCryptorStatus (*orig_CCCryptorGCMEncrypt)(CCCryptorRef cryptorRef, const void *dataIn, size_t dataInLength, void *dataOut);
+static CCCryptorStatus (*orig_CCCryptorGCMDecrypt)(CCCryptorRef cryptorRef, const void *dataIn, size_t dataInLength, void *dataOut);
+static CCCryptorStatus (*orig_CCCryptorGCMFinal)(CCCryptorRef cryptorRef, void *tagOut, size_t *tagLength);
 
 static NSMutableDictionary *CryptoContextMap(void) {
     static NSMutableDictionary *map = nil;
@@ -635,7 +636,7 @@ CCCryptorStatus my_CCCryptorFinal(CCCryptorRef cryptorRef,
             }
         }
     }
-    // Final 是加密操作终点，主动清理上下文，避免无 Release 场景泄漏
+    
     RemoveCryptorContext(cryptorRef);
     return status;
 }
@@ -1159,49 +1160,84 @@ CCCryptorStatus my_CCCryptorGCMAddAAD(CCCryptorRef cryptorRef, const void *aData
     return status;
 }
 
-CCCryptorStatus my_CCCryptorGCMUpdate(CCCryptorRef cryptorRef, const void *dataIn, size_t dataInLength, void *dataOut) {
-    if (!orig_CCCryptorGCMUpdate) return kCCUnimplemented;
-    NSString *bundleID = CurrentBundleID();
-    DatabaseManager *db = [DatabaseManager sharedManager];
-    BOOL enabled = [db isCryptoCaptureEnabledForBundle:bundleID];
 
-    CCCryptorStatus status = orig_CCCryptorGCMUpdate(cryptorRef, dataIn, dataInLength, dataOut);
 
-    if (enabled) {
-        NSDictionary *ctx = GetCryptorContext(cryptorRef);
+static NSDictionary *GCMContextAccumulate(CCCryptorRef cryptorRef, const void *dataIn,
+                                          size_t dataInLength, const void *dataOut,
+                                          size_t dataOutLength) {
+    if (!cryptorRef) return nil;
+    @synchronized (CryptoContextMap()) {
+        NSDictionary *ctx = CryptoContextMap()[KeyForCryptor(cryptorRef)];
+        if (![ctx isKindOfClass:[NSMutableDictionary class]]) return [ctx copy];
+        NSMutableDictionary *mctx = (NSMutableDictionary *)ctx;
+        NSMutableData *inputAccum = mctx[@"inputAccum"];
+        NSMutableData *outputAccum = mctx[@"outputAccum"];
+        if (!inputAccum) { inputAccum = [NSMutableData data]; mctx[@"inputAccum"] = inputAccum; }
+        if (!outputAccum) { outputAccum = [NSMutableData data]; mctx[@"outputAccum"] = outputAccum; }
+        if (dataIn && dataInLength) [inputAccum appendBytes:dataIn length:dataInLength];
+        if (dataOut && dataOutLength) [outputAccum appendBytes:dataOut length:dataOutLength];
+        return [mctx copy];
+    }
+}
 
-        if (ctx && [ctx isKindOfClass:[NSMutableDictionary class]]) {
-            NSMutableDictionary *mctx = (NSMutableDictionary *)ctx;
-            NSMutableData *inputAccum = mctx[@"inputAccum"];
-            NSMutableData *outputAccum = mctx[@"outputAccum"];
-            if (!inputAccum) { inputAccum = [NSMutableData data]; mctx[@"inputAccum"] = inputAccum; }
-            if (!outputAccum) { outputAccum = [NSMutableData data]; mctx[@"outputAccum"] = outputAccum; }
-            if (dataIn && dataInLength) [inputAccum appendBytes:dataIn length:dataInLength];
-            if (dataOut && dataInLength) [outputAccum appendBytes:dataOut length:dataInLength];
-        }
 
-        BOOL isDecrypt = ctx ? ([ctx[@"op"] unsignedIntValue] == kCCDecrypt) : NO;
-        NSString *header = [NSString stringWithFormat:
-                            @"[CCCryptorGCMUpdate] %@ %@ Status:%d\n算法: %@\n模式: GCM\nKey Hex: %@\nIV Hex: %@",
-                            SafeString(ctx[@"opName"]), SafeString(ctx[@"algName"]), status,
-                            SafeString(ctx[@"algName"]), SafeString(ctx[@"keyHex"]),
-                            SafeString(ctx[@"gcmIVHex"] ?: ctx[@"ivHex"])];
-        NSString *io = FormatIOBlock(header, dataIn, dataInLength, dataOut, dataInLength);
-        StoreCryptoRecord(io, isDecrypt);
+static void GCMTakeFullBuffers(CCCryptorRef cryptorRef, NSDictionary **outCtx,
+                               NSData **outInput, NSData **outOutput) {
+    *outCtx = nil; *outInput = nil; *outOutput = nil;
+    if (!cryptorRef) return;
+    @synchronized (CryptoContextMap()) {
+        NSDictionary *ctx = CryptoContextMap()[KeyForCryptor(cryptorRef)];
+        *outCtx = [ctx copy];
+        *outInput = [ctx[@"inputAccum"] copy];
+        *outOutput = [ctx[@"outputAccum"] copy];
+    }
+}
+
+static void CaptureGCMChunk(CCCryptorRef cryptorRef, const void *dataIn, size_t dataInLength,
+                            void *dataOut, CCCryptorStatus status, NSString *fnName) {
+    NSDictionary *ctx = GCMContextAccumulate(cryptorRef, dataIn, dataInLength,
+                                             dataOut, dataInLength);
+    BOOL isDecrypt = ctx ? ([ctx[@"op"] unsignedIntValue] == kCCDecrypt) : NO;
+    NSString *header = [NSString stringWithFormat:
+                        @"[%@] %@ %@ Status:%d\n算法: %@\n模式: GCM\nKey Hex: %@\nIV Hex: %@",
+                        fnName, SafeString(ctx[@"opName"]), SafeString(ctx[@"algName"]), status,
+                        SafeString(ctx[@"algName"]), SafeString(ctx[@"keyHex"]),
+                        SafeString(ctx[@"gcmIVHex"] ?: ctx[@"ivHex"])];
+    NSString *io = FormatIOBlock(header, dataIn, dataInLength, dataOut, dataInLength);
+    StoreCryptoRecord(io, isDecrypt);
+}
+
+CCCryptorStatus my_CCCryptorGCMEncrypt(CCCryptorRef cryptorRef, const void *dataIn, size_t dataInLength, void *dataOut) {
+    if (!orig_CCCryptorGCMEncrypt) return kCCUnimplemented;
+    CCCryptorStatus status = orig_CCCryptorGCMEncrypt(cryptorRef, dataIn, dataInLength, dataOut);
+    if ([[DatabaseManager sharedManager] isCryptoCaptureEnabledForBundle:CurrentBundleID()]) {
+        CaptureGCMChunk(cryptorRef, dataIn, dataInLength, dataOut, status, @"CCCryptorGCMEncrypt");
     }
     return status;
 }
 
-CCCryptorStatus my_CCCryptorGCMFinal(CCCryptorRef cryptorRef, void *dataOut, void *tagOut, size_t *tagLength) {
+CCCryptorStatus my_CCCryptorGCMDecrypt(CCCryptorRef cryptorRef, const void *dataIn, size_t dataInLength, void *dataOut) {
+    if (!orig_CCCryptorGCMDecrypt) return kCCUnimplemented;
+    CCCryptorStatus status = orig_CCCryptorGCMDecrypt(cryptorRef, dataIn, dataInLength, dataOut);
+    if ([[DatabaseManager sharedManager] isCryptoCaptureEnabledForBundle:CurrentBundleID()]) {
+        CaptureGCMChunk(cryptorRef, dataIn, dataInLength, dataOut, status, @"CCCryptorGCMDecrypt");
+    }
+    return status;
+}
+
+CCCryptorStatus my_CCCryptorGCMFinal(CCCryptorRef cryptorRef, void *tagOut, size_t *tagLength) {
     if (!orig_CCCryptorGCMFinal) return kCCUnimplemented;
     NSString *bundleID = CurrentBundleID();
     DatabaseManager *db = [DatabaseManager sharedManager];
     BOOL enabled = [db isCryptoCaptureEnabledForBundle:bundleID];
 
-    CCCryptorStatus status = orig_CCCryptorGCMFinal(cryptorRef, dataOut, tagOut, tagLength);
+    CCCryptorStatus status = orig_CCCryptorGCMFinal(cryptorRef, tagOut, tagLength);
 
     if (enabled) {
-        NSDictionary *ctx = GetCryptorContext(cryptorRef);
+        NSDictionary *ctx = nil;
+        NSData *fullInput = nil;
+        NSData *fullOutput = nil;
+        GCMTakeFullBuffers(cryptorRef, &ctx, &fullInput, &fullOutput);
         size_t tagLen = (status == kCCSuccess && tagLength) ? *tagLength : 0;
         BOOL isDecrypt = ctx ? ([ctx[@"op"] unsignedIntValue] == kCCDecrypt) : NO;
         NSString *tagHex = HexStringFromBytes(tagOut, tagLen);
@@ -1213,24 +1249,20 @@ CCCryptorStatus my_CCCryptorGCMFinal(CCCryptorRef cryptorRef, void *dataOut, voi
                              tagHex, tagB64, (unsigned long)tagLen];
         StoreCryptoRecord(tagInfo, isDecrypt);
 
-        if (ctx && [ctx isKindOfClass:[NSMutableDictionary class]]) {
-            NSData *fullInput = ((NSMutableDictionary *)ctx)[@"inputAccum"];
-            NSData *fullOutput = ((NSMutableDictionary *)ctx)[@"outputAccum"];
-            if (fullOutput.length || fullInput.length) {
-                NSString *wholeHeader = [NSString stringWithFormat:
-                    @"[GCM 完整%@结果] %@ %@ Status:%d\n算法: %@\n模式: GCM\nKey Hex: %@\nKey Base64: %@\nIV Hex: %@\nIV Base64: %@\nAAD Hex: %@\nTag Hex: %@\nTag Base64: %@",
-                    isDecrypt ? @"解密" : @"加密", SafeString(ctx[@"opName"]), SafeString(ctx[@"algName"]), status,
-                    SafeString(ctx[@"algName"]),
-                    SafeString(ctx[@"keyHex"]), SafeString(ctx[@"keyB64"]),
-                    SafeString(ctx[@"gcmIVHex"] ?: ctx[@"ivHex"]),
-                    SafeString(ctx[@"gcmIVB64"] ?: ctx[@"ivB64"]),
-                    SafeString(((NSDictionary *)ctx)[@"gcmAADHex"] ?: @"(null)"),
-                    tagHex, tagB64];
-                NSString *whole = FormatIOBlock(wholeHeader, fullInput.bytes, fullInput.length, fullOutput.bytes, fullOutput.length);
-                StoreCryptoRecord(whole, isDecrypt);
-                if (!isDecrypt && fullInput.length > 0) {
-                    [[DatabaseManager sharedManager] insertDataIntoTable:@"decrypt_data" bundleID:bundleID text:[@"[GCM 加密前明文捕获]\n" stringByAppendingString:whole]];
-                }
+        if (fullOutput.length || fullInput.length) {
+            NSString *wholeHeader = [NSString stringWithFormat:
+                @"[GCM 完整%@结果] %@ %@ Status:%d\n算法: %@\n模式: GCM\nKey Hex: %@\nKey Base64: %@\nIV Hex: %@\nIV Base64: %@\nAAD Hex: %@\nTag Hex: %@\nTag Base64: %@",
+                isDecrypt ? @"解密" : @"加密", SafeString(ctx[@"opName"]), SafeString(ctx[@"algName"]), status,
+                SafeString(ctx[@"algName"]),
+                SafeString(ctx[@"keyHex"]), SafeString(ctx[@"keyB64"]),
+                SafeString(ctx[@"gcmIVHex"] ?: ctx[@"ivHex"]),
+                SafeString(ctx[@"gcmIVB64"] ?: ctx[@"ivB64"]),
+                SafeString(ctx[@"gcmAADHex"] ?: @"(null)"),
+                tagHex, tagB64];
+            NSString *whole = FormatIOBlock(wholeHeader, fullInput.bytes, fullInput.length, fullOutput.bytes, fullOutput.length);
+            StoreCryptoRecord(whole, isDecrypt);
+            if (!isDecrypt && fullInput.length > 0) {
+                [db insertDataIntoTable:@"decrypt_data" bundleID:bundleID text:[@"[GCM 加密前明文捕获]\n" stringByAppendingString:whole]];
             }
         }
     }
@@ -1256,7 +1288,8 @@ void RegisterCryptoHooks(void) {
         {"CCKeyDerivationPBKDF", my_CCKeyDerivationPBKDF, (void **)&orig_CCKeyDerivationPBKDF},
         {"CCCryptorGCMAddIV", my_CCCryptorGCMAddIV, (void **)&orig_CCCryptorGCMAddIV},
         {"CCCryptorGCMAddAAD", my_CCCryptorGCMAddAAD, (void **)&orig_CCCryptorGCMAddAAD},
-        {"CCCryptorGCMUpdate", my_CCCryptorGCMUpdate, (void **)&orig_CCCryptorGCMUpdate},
+        {"CCCryptorGCMEncrypt", my_CCCryptorGCMEncrypt, (void **)&orig_CCCryptorGCMEncrypt},
+        {"CCCryptorGCMDecrypt", my_CCCryptorGCMDecrypt, (void **)&orig_CCCryptorGCMDecrypt},
         {"CCCryptorGCMFinal", my_CCCryptorGCMFinal, (void **)&orig_CCCryptorGCMFinal},
         {"SecKeyEncrypt", my_SecKeyEncrypt, (void **)&orig_SecKeyEncrypt},
         {"SecKeyDecrypt", my_SecKeyDecrypt, (void **)&orig_SecKeyDecrypt},

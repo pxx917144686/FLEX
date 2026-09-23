@@ -59,6 +59,13 @@ static NSData *CDCentralHeader(NSData *nameData, uint32_t crc, uint32_t size, ui
     return d;
 }
 
+
+
+static BOOL CDWrite(NSFileHandle *handle, NSData *data, NSError **error) {
+    if (data.length == 0) return YES;
+    return [handle writeData:data error:error];
+}
+
 @implementation CDZipWriter
 
 + (BOOL)createZipAtPath:(NSString *)zipPath
@@ -68,6 +75,18 @@ static NSData *CDCentralHeader(NSData *nameData, uint32_t crc, uint32_t size, ui
                   error:(NSError **)error {
 
     NSFileManager *fm = NSFileManager.defaultManager;
+
+    
+    
+    if (files.count > UINT16_MAX) {
+        if (error) {
+            NSString *desc = [NSString stringWithFormat:@"文件数 %lu 超过 ZIP 上限 65535（未实现 ZIP64）",
+                              (unsigned long)files.count];
+            *error = [NSError errorWithDomain:@"CDZipWriter" code:-2
+                                     userInfo:@{NSLocalizedDescriptionKey: desc}];
+        }
+        return NO;
+    }
 
     NSString *parent = [zipPath stringByDeletingLastPathComponent];
     if (parent.length) {
@@ -93,8 +112,9 @@ static NSData *CDCentralHeader(NSData *nameData, uint32_t crc, uint32_t size, ui
     }
 
     NSMutableData *central = [NSMutableData data];
-    uint32_t offset = 0;
-    uint16_t entryCount = 0;
+    uint64_t offset = 0;
+    uint32_t entryCount = 0;
+    BOOL failed = NO;
 
     NSUInteger total = files.count;
     NSUInteger done = 0;
@@ -120,17 +140,30 @@ static NSData *CDCentralHeader(NSData *nameData, uint32_t crc, uint32_t size, ui
                 continue;
             }
 
-            uint32_t size = (uint32_t)MIN(content.length, UINT32_MAX);
+            
+            if (content.length > UINT32_MAX || offset + content.length > UINT32_MAX) {
+                if (error) {
+                    *error = [NSError errorWithDomain:@"CDZipWriter" code:-3
+                                             userInfo:@{NSLocalizedDescriptionKey:
+                                                            @"归档超过 4GB（未实现 ZIP64）"}];
+                }
+                failed = YES;
+                break;
+            }
+
+            uint32_t size = (uint32_t)content.length;
             uint32_t crc = (uint32_t)crc32(0, content.bytes, (uInt)content.length);
 
             NSData *local = CDLocalHeader(nameData, crc, size);
-            [handle writeData:local];
-            [handle writeData:content];
+            if (!CDWrite(handle, local, error) || !CDWrite(handle, content, error)) {
+                failed = YES;
+                break;
+            }
 
-            NSData *center = CDCentralHeader(nameData, crc, size, offset);
+            NSData *center = CDCentralHeader(nameData, crc, size, (uint32_t)offset);
             [central appendData:center];
 
-            offset += (uint32_t)(local.length + content.length);
+            offset += local.length + content.length;
             entryCount++;
 
             done++;
@@ -140,23 +173,29 @@ static NSData *CDCentralHeader(NSData *nameData, uint32_t crc, uint32_t size, ui
         }
     }
 
-    uint32_t centralOffset = offset;
-    [handle writeData:central];
-    offset += (uint32_t)central.length;
+    if (!failed) {
+        uint32_t centralOffset = (uint32_t)offset;
+        failed = !CDWrite(handle, central, error);
 
-    NSMutableData *end = [NSMutableData data];
-    CDAppendUInt32(end, 0x06054b50);
-    CDAppendUInt16(end, 0);
-    CDAppendUInt16(end, 0);
-    CDAppendUInt16(end, entryCount);
-    CDAppendUInt16(end, entryCount);
-    CDAppendUInt32(end, (uint32_t)central.length);
-    CDAppendUInt32(end, centralOffset);
-    CDAppendUInt16(end, 0);
-    [handle writeData:end];
+        NSMutableData *end = [NSMutableData data];
+        CDAppendUInt32(end, 0x06054b50);
+        CDAppendUInt16(end, 0);
+        CDAppendUInt16(end, 0);
+        CDAppendUInt16(end, (uint16_t)entryCount);
+        CDAppendUInt16(end, (uint16_t)entryCount);
+        CDAppendUInt32(end, (uint32_t)central.length);
+        CDAppendUInt32(end, centralOffset);
+        CDAppendUInt16(end, 0);
+        if (!failed) failed = !CDWrite(handle, end, error);
+    }
 
     [handle closeFile];
 
+    if (failed) {
+        
+        [fm removeItemAtPath:zipPath error:nil];
+        return NO;
+    }
     return YES;
 }
 

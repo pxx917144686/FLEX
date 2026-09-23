@@ -21,7 +21,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)isDigestCaptureEnabledForBundle:(NSString *)bundleID;
 - (BOOL)isHMACCaptureEnabledForBundle:(NSString *)bundleID;
 
-// 是否有任一捕获开关开启（供 hook 入口一行短路，含内存缓存）
+
 - (BOOL)anyCaptureActiveForBundle:(NSString *)bundleID;
 
 - (void)insertLogText:(NSString *)logText;

@@ -605,54 +605,63 @@
     }
     if (!entryBlock) entryBlock = self.basicBlocks.firstObject;
     
-    NSMutableArray *stack = [NSMutableArray array];
+    
+    
+    NSMutableArray<UCBasicBlock *> *stack = [NSMutableArray array];
+    NSMutableArray<NSNumber *> *nextSuccIdx = [NSMutableArray array];
     NSMutableSet *visited = [NSMutableSet set];
     NSMutableSet *onStack = [NSMutableSet set];
-    
+
+    NSNumber *entryId = @(entryBlock.blockId);
+    levelMap[entryId] = @0;
+    levelBlocks[@0] = [NSMutableArray arrayWithObject:entryId];
+    [visited addObject:entryId];
+    [onStack addObject:entryId];
     [stack addObject:entryBlock];
-    [onStack addObject:@(entryBlock.blockId)];
-    levelMap[@(entryBlock.blockId)] = @0;
-    
+    [nextSuccIdx addObject:@0];
+
     while (stack.count > 0) {
         UCBasicBlock *current = stack.lastObject;
-        NSNumber *curId = @(current.blockId);
-        
-        if ([visited containsObject:curId]) {
+        NSUInteger idx = nextSuccIdx.lastObject.unsignedIntegerValue;
+
+        if (idx >= current.successors.count) {
             [stack removeLastObject];
-            [onStack removeObject:curId];
+            [nextSuccIdx removeLastObject];
+            [onStack removeObject:@(current.blockId)];
             continue;
         }
-        [visited addObject:curId];
-        
-        NSInteger currentLevel = [levelMap[curId] integerValue];
-        
-        if (!levelBlocks[@(currentLevel)]) {
-            levelBlocks[@(currentLevel)] = [NSMutableArray array];
-        }
-        if (![levelBlocks[@(currentLevel)] containsObject:curId]) {
-            [levelBlocks[@(currentLevel)] addObject:curId];
-        }
-        
-        for (UCBasicBlock *succ in current.successors) {
-            NSNumber *succId = @(succ.blockId);
+        nextSuccIdx[nextSuccIdx.count - 1] = @(idx + 1);
 
-            if ([visited containsObject:succId] && [onStack containsObject:succId]) {
-                NSString *edgeKey = [NSString stringWithFormat:@"%ld->%ld", (long)current.blockId, (long)succ.blockId];
-                [backEdges addObject:edgeKey];
-                continue;
-            }
+        UCBasicBlock *succ = current.successors[idx];
+        NSNumber *succId = @(succ.blockId);
+        NSInteger currentLevel = [levelMap[@(current.blockId)] integerValue];
 
-            NSNumber *existingLevel = levelMap[succId];
-            NSInteger newLevel = currentLevel + 1;
-            if (!existingLevel || [existingLevel integerValue] < newLevel) {
-                levelMap[succId] = @(newLevel);
-            }
-
-            if (![visited containsObject:succId]) {
-                [stack addObject:succ];
-                [onStack addObject:succId];
-            }
+        if ([onStack containsObject:succId]) {
+            NSString *edgeKey = [NSString stringWithFormat:@"%ld->%ld", (long)current.blockId, (long)succ.blockId];
+            [backEdges addObject:edgeKey];
+            continue;
         }
+
+        NSNumber *existingLevel = levelMap[succId];
+        NSInteger newLevel = currentLevel + 1;
+        if (!existingLevel || [existingLevel integerValue] < newLevel) {
+            levelMap[succId] = @(newLevel);
+        }
+
+        if ([visited containsObject:succId]) continue;
+        [visited addObject:succId];
+        [onStack addObject:succId];
+
+        NSNumber *placedLevel = @(levelMap[succId].integerValue);
+        if (!levelBlocks[placedLevel]) {
+            levelBlocks[placedLevel] = [NSMutableArray array];
+        }
+        if (![levelBlocks[placedLevel] containsObject:succId]) {
+            [levelBlocks[placedLevel] addObject:succId];
+        }
+
+        [stack addObject:succ];
+        [nextSuccIdx addObject:@0];
     }
     
     for (UCBasicBlock *block in self.basicBlocks) {
@@ -847,6 +856,17 @@
 
 #pragma mark - UCFuncListViewController
 
+
+
+@interface UCFuncListSubtitleCell : UITableViewCell
+@end
+
+@implementation UCFuncListSubtitleCell
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
+    return [super initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:reuseIdentifier];
+}
+@end
+
 @interface UCFuncListViewController () <UITableViewDataSource, UITableViewDelegate, UISearchBarDelegate>
 
 @property (nonatomic, strong) UITableView *tableView;
@@ -886,7 +906,7 @@
     self.tableView.dataSource = self;
     self.tableView.delegate = self;
     self.tableView.tableHeaderView = self.searchBar;
-    [self.tableView registerClass:[UITableViewCell class] forCellReuseIdentifier:@"FuncCell"];
+    [self.tableView registerClass:[UCFuncListSubtitleCell class] forCellReuseIdentifier:@"FuncCell"];
     
     [self.view addSubview:self.tableView];
 }
